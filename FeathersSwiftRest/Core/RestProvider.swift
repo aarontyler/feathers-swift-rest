@@ -25,9 +25,7 @@ final public class RestProvider: Provider {
         self.baseURL = baseURL
     }
 
-    public final func setup(app: Feathers) {
-        //no-op
-    }
+    public final func setup(app: Feathers) {}
 
     public func request(endpoint: Endpoint) -> SignalProducer<Response, AnyFeathersError> {
         return SignalProducer { [weak self] observer, disposable in
@@ -88,9 +86,7 @@ final public class RestProvider: Provider {
                 observer.sendInterrupted()
                 return
             }
-            
-            let pathString = vSelf.baseURL.absoluteString.last == "/" ? String(path.dropFirst()) : path
-            Alamofire.request(vSelf.baseURL.appendingPathComponent(pathString), method: method, parameters: parameters, encoding: encoding)
+            Alamofire.request(vSelf.baseURL.appendingPathComponent(path), method: method, parameters: parameters, encoding: encoding)
                 .validate()
                 .response(responseSerializer: DataRequest.jsonResponseSerializer()) { response in
                     let result = vSelf.handleResponse(response)
@@ -148,8 +144,9 @@ final public class RestProvider: Provider {
         if let accessToken = endpoint.accessToken {
             urlRequest.allHTTPHeaderFields = [endpoint.authenticationConfiguration.header: accessToken]
         }
-        urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        
         urlRequest.httpBody = endpoint.method.data != nil ? try? JSONSerialization.data(withJSONObject: endpoint.method.data!, options: []) : nil
+        urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
         return urlRequest
     }
 
@@ -158,7 +155,6 @@ final public class RestProvider: Provider {
 fileprivate extension Service.Method {
 
     var httpMethod: HTTPMethod {
-    /// Mapping of feathers method to http method
         switch self {
         case .find: return .get
         case .get: return .get
@@ -181,32 +177,7 @@ fileprivate extension URL {
         guard var urlComponents = URLComponents(url: self, resolvingAgainstBaseURL: true) else {
             return self
         }
-        var items: [URLQueryItem] = []
-        
-        for (key, value) in parameters {
-            if let valueDict = value as? [String: Any] {
-                let valueDictKeys = Array(valueDict.keys)
-                for nestedKey in valueDictKeys {
-                    let type = PropertySubquerySet.type(for: nestedKey)
-                    switch type {
-                    case .array:
-                        guard let valuesArray = valueDict[nestedKey] as? [String] else {
-                            continue
-                        }
-                        for (index, object) in valuesArray.enumerated() {
-                            items.append(URLQueryItem(name: "\(key)[\(nestedKey)][\(index)]", value: "\(object)"))
-                        }
-                    case .singleValue:
-                        items.append(URLQueryItem(name: "\(key)[\(nestedKey)]", value: "\(valueDict[nestedKey]!)"))
-                    case .sort:
-                        items.append(URLQueryItem(name: "\(key)[\(nestedKey)]", value: "\(valueDict[nestedKey]!)"))
-                    }
-                }
-            } else {
-                items.append(URLQueryItem(name: key, value: "\(value)"))
-            }
-        }
-        urlComponents.queryItems = items
+        urlComponents.queryItems = urlComponents.queryItems ?? [] + parameters.map { URLQueryItem(name: $0, value: "\($1)") }
         return urlComponents.url
     }
     
@@ -215,7 +186,6 @@ fileprivate extension URL {
 fileprivate extension Endpoint {
 
     var url: URL {
-    /// Builds url according to endpoints' method
         var url = baseURL.appendingPathComponent(path)
         switch method {
         case .get(let id, _):
@@ -229,6 +199,7 @@ fileprivate extension Endpoint {
         url = method.parameters != nil ? (url.URLByAppendingQueryParameters(parameters: method.parameters!) ?? url) : url
         return url
     }
+    
 }
 
 public extension Service.Method {
@@ -247,7 +218,7 @@ public extension Service.Method {
         switch self {
         case .find(let query): return query?.serialize()
         case .get(_, let query): return query?.serialize()
-        case .create(_, let query): return query?.serialize()
+        case .create(let data): return data
         case .update(_, _, let query): return query?.serialize()
         case .patch(_, _, let query): return query?.serialize()
         case .remove(_, let query): return query?.serialize()
@@ -256,7 +227,7 @@ public extension Service.Method {
 
     var data: [String: Any]? {
         switch self {
-        case .create(let data, _): return data
+        case .create(let data): return data
         case .update(_, let data, _): return data
         case .patch(_, let data, _): return data
         default: return nil
